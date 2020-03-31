@@ -1,0 +1,149 @@
+---
+title: "LAB5"
+author: "Мелихова И.С."
+date: "31 03 2020"
+output: html_document
+---
+
+## Аналитический пакет R. 
+
+Задание:
+С помощью «knitr» создать html-отчёт с короткими пояснениями к данным и с двумя
+картами:
+1. Карта-хороплет регионов РФ, входящих в состав Приволжского федерального округа,
+построенная функцией spplot() по данным сборников “Регионы России” за
+последний доступный год 16.
+2. Такая же карта но со статистикой за 2010 год, построенная функцией ggplot().
+
+Показатель: "кризисный индекс качества жизни".
+
+```{r}
+# Создание статических картограмм ==============================================
+
+# загрузка пакетов
+# library('R.utils')               # gunzip() для распаковки архивов 
+library('sp')                    # функция spplot()
+library('ggplot2')               # функция ggplot()
+library('RColorBrewer')          # цветовые палитры
+require('rgdal')                 # функция readOGR()
+library('broom')                 # функция tidy()
+require('dplyr')                 # функция join()
+library('scales')                # функция pretty_breaks()
+library('mapproj')               # проекции для карт
+## установка и сборка пакета «gpclib»
+## установить RTools (recommended) отсюда:
+## http://cran.r-project.org/bin/windows/Rtools/
+# install.packages('gpclib', type = 'source')
+library('gpclib')
+library('maptools')
+# разрешить использовать полигональную геометрию, которая защищена лицензией 
+gpclibPermit()
+
+# распаковка данных (архив в ./data)
+unzip('./data/gadm36_RUS_shp.zip', exdir = './data/RUS_adm_shp')
+
+# прочитать данные уровней 0, 1
+Regions0 <- readOGR("./data/RUS_adm_shp/gadm36_RUS_0.shp", stringsAsFactors = F)
+Regions1 <- readOGR("./data/RUS_adm_shp/gadm36_RUS_1.shp", stringsAsFactors = F)
+par(mfrow = c(1, 2))
+par(oma = c(0, 0, 0, 0))
+par(mar = c(0, 0, 1, 0))
+plot(Regions0, main = 'adm0', asp = 1.8)
+plot(Regions1, main = 'adm1', asp = 1.8)
+par(mfrow = c(1, 1))
+
+```
+
+## Карта-хороплет для численности населения в регионах ПФО
+
+```{r}
+slotNames(Regions1)
+
+# слот data
+head(Regions1@data)
+# head(Regions1@polygons)
+colnames(Regions1@data)
+
+# преобразуем кодировку
+Encoding(Regions1@data$NL_NAME_1) <- 'UTF-8'
+Regions1@data$NL_NAME_1[1:10]
+
+# делаем фрейм с координатами для ggplot
+Regions.points <- fortify(Regions1, region = 'NAME_1')
+```
+
+Оставляем только регионы ПФО и присоединяем показатель "Кризисный индекс качества жизни".
+
+```{r}
+reg.names.ПФО <- c('Bashkortostan','Kirov','Mariy-El','Mordovia','Nizhegorod',
+                   'Orenburg','Penza','Perm','Samara','Saratov','Tatarstan','Udmurt', 
+                   "Ul'yanovsk",'Chuvash')  
+Regions.points <- Regions.points[Regions.points$id %in% reg.names.ПФО, ]
+head(Regions.points)
+
+df.pop <- read.csv2('./reg_CFO_ik.csv', stringsAsFactors = F)
+Regions.points <- merge(Regions.points, df.pop, by = 'id')
+Regions.points <- Regions.points[order(Regions.points$order), ]
+```
+
+##  График spplot
+
+Карта-хороплет регионов РФ, входящих в состав Приволжского федерального округа,
+построенная функцией spplot() по данным сборников “Регионы России” за
+последний доступный год 16, показатель "Кризисный индекс качества жизни".
+
+```{r}
+# работаем с Regions1, добавляем статистику
+Regions1@data <- merge(Regions1@data, df.pop, 
+                       by.x = 'NAME_1', by.y = 'id', all.x = T)
+
+
+  scale.parameter <- 0.6  # scaling paramter. less than 1 is zooming in, more than 1 zooming out. 
+xshift <- -0.1  # Shift to right in map units. 
+yshift <- 0.1  # Shift to left in map units. 
+original.bbox <- Regions1@bbox  # Pass bbox of your Spatial* Object. 
+
+# Just copy-paste the following
+edges <- original.bbox
+edges[1, ] <- (edges[1, ] - mean(edges[1, ])) * 
+    scale.parameter + mean(edges[1, ]) + xshift
+edges[2, ] <- (edges[2, ] - mean(edges[2, ])) * scale.parameter + 
+    mean(edges[2, ]) + yshift
+
+
+mypalette <- colorRampPalette(c('whitesmoke', 'blue'))
+spplot(Regions1, 'kikzh.2016',
+       col.regions = mypalette(20), # цветовая шкала
+       main = 'Кризисный индекс качества жизни в 2016 г.',
+       # (20 градаций)
+       col = 'coral4', # цвет контурных линий
+       par.settings = list(axis.line = list(col = NA)), # без осей
+       xlim = edges[1, ], ylim = edges[2, ] 
+)
+# пример окончен, удаляем большой объект из памяти
+rm(Regions1)
+```
+
+## График ggplot2
+
+Статистика за 2010 год.
+
+```{r}
+gp <- ggplot() + 
+  geom_polygon(data = Regions.points, 
+               aes(long, lat, group = group, fill = kikzh.2010)) +
+  geom_path(data = Regions.points, 
+            aes(long, lat, group = group),
+            color = 'coral4') +
+  coord_map(projection = 'gilbert') +
+  scale_fill_distiller(palette = 'OrRd',
+                       direction = 1,
+                       breaks = pretty_breaks(n = 5)) +
+  labs(x = 'Долгота', y = 'Широта', 
+       title = 'Кризисный индекс качества жизни в 2010 г.')
+# выводим график
+gp
+
+```
+
+
